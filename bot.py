@@ -1,70 +1,58 @@
 import os
+import asyncio
 import pandas as pd
 import yfinance as yf
 import requests
 
-# --- CONFIGURATION (Uses GitHub Secrets) ---
+# --- 1. CONFIGURATION ---
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-SYMBOL = "GC=F"  # Gold (XAU/USD)
+SYMBOL = "GC=F"
 
 def send_telegram(message):
-    """Sends a notification to your Telegram bot."""
-    if not TOKEN or not CHAT_ID:
-        print("Error: Telegram credentials missing.")
-        return
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage?chat_id={CHAT_ID}&text={message}"
-    try:
-        requests.get(url)
-    except Exception as e:
-        print(f"Telegram Error: {e}")
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage?chat_id={CHAT_ID}&text={message}&parse_mode=Markdown"
+    requests.get(url)
 
-def run_sentinel_bot():
-    """Main logic for tracking Whales and Market Gaps."""
-    print(f"Fetching data for {SYMBOL}...")
-    
-    # Fetch 2 days of 15m data to ensure we have enough candles
+# --- 2. THE THREE LOGIC MODULES ---
+
+async def strategy_whale_sweep():
+    """Bot 1: Liquidity Sweeps"""
     df = yf.download(SYMBOL, period="2d", interval="15m")
-    
-    # Safety check: We need at least 21 candles for the 20-period lookback
-    if len(df) < 21:
-        print("Not enough data to calculate liquidity levels yet.")
-        return
-
-    # EXTRACTING SCALAR VALUES (The fix for the ValueError)
-    # c1 = Movement Candle | c2 = Displacement | c3 = Current/Confirmation
     c1_low = df['Low'].iloc[-3].item()
-    c1_high = df['High'].iloc[-3].item()
     c1_close = df['Close'].iloc[-3].item()
-    
-    c3_low = df['Low'].iloc[-1].item()
-    c3_high = df['High'].iloc[-1].item()
-    
-    # --- LOGIC 1: THE LIQUIDITY SWEEP (Strategy 1) ---
-    # Look back 20 candles (excluding the most recent ones)
     recent_low = df['Low'].iloc[-20:-3].min().item()
-    recent_high = df['High'].iloc[-20:-3].max().item()
     
-    # Bullish Sweep: Price dipped below recent low but closed above it
     if c1_low < recent_low and c1_close > recent_low:
-        send_telegram("🚨 WHALE ALERT: Liquidity SWEEP (LOW) detected. Retail stops hit. Look for Buy.")
+        send_telegram("🚨 *WHALE ALERT*\n━━━━━━━━━━━━━━━\nType: Liquidity Sweep (LOW)\nStatus: Bullish Confirmation")
 
-    # Bearish Sweep: Price spiked above recent high but closed below it
-    if c1_high > recent_high and c1_close < recent_high:
-        send_telegram("🚨 WHALE ALERT: Liquidity SWEEP (HIGH) detected. Retail stops hit. Look for Sell.")
-
-    # --- LOGIC 2: THE FAIR VALUE GAP (Strategy 3) ---
-    # Bullish FVG: Gap between Candle 1 High and Candle 3 Low
+async def strategy_fvg_scanner():
+    """Bot 2: Fair Value Gaps"""
+    df = yf.download(SYMBOL, period="2d", interval="15m")
+    c1_high = df['High'].iloc[-3].item()
+    c3_low = df['Low'].iloc[-1].item()
+    
     if c3_low > c1_high:
-        gap_size = c3_low - c1_high
-        send_telegram(f"⚖️ MARKET GAP: Bullish FVG detected. Size: {round(gap_size, 2)} points.")
+        gap = round(c3_low - c1_high, 2)
+        send_telegram(f"⚖️ *MARKET GAP*\n━━━━━━━━━━━━━━━\nType: Bullish FVG\nSize: {gap} points")
 
-    # Bearish FVG: Gap between Candle 1 Low and Candle 3 High
-    if c3_high < c1_low:
-        gap_size = c1_low - c3_high
-        send_telegram(f"⚖️ MARKET GAP: Bearish FVG detected. Size: {round(gap_size, 2)} points.")
+async def strategy_sentiment():
+    """Bot 3: Mayank Sir / Sentiment Logic"""
+    # Put your specific sentiment or price-action score logic here
+    # Example:
+    score = 7 # Placeholder for your Mayank Sir logic
+    if score > 5:
+        send_telegram("🔥 *SENTIMENT SCORE*\n━━━━━━━━━━━━━━━\nScore: 7/10\nBias: STRONG BUY")
 
-    print("Scan complete.")
+# --- 3. THE MASTER RUNNER ---
+
+async def main():
+    print("🚀 Lachit Multi-Bot is live...")
+    # This runs all three functions at the same time
+    await asyncio.gather(
+        strategy_whale_sweep(),
+        strategy_fvg_scanner(),
+        strategy_sentiment()
+    )
 
 if __name__ == "__main__":
-    run_sentinel_bot()
+    asyncio.run(main())
