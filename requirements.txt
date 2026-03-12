@@ -1,4 +1,6 @@
-pandas
 yfinance
+pandas
+pandas-ta
 requests
-lxml
+numexpr
+bottleneck
