@@ -1,6 +1,4 @@
 yfinance
 pandas
-pandas-ta
 requests
-numexpr
-bottleneck
+numpy
