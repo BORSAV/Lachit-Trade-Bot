@@ -1,71 +1,85 @@
 import yfinance as yf
 import pandas as pd
+import numpy as np
 import requests
 import time
-import numpy as np
 
 # --- CONFIGURATION ---
-SYMBOL = "GC=F"  # Gold
+SYMBOL = "GC=F"  # Gold Futures (XAU/USD)
 INTERVAL = "1m"
 TELEGRAM_TOKEN = "YOUR_BOT_TOKEN"
 CHAT_ID = "YOUR_CHAT_ID"
 
 def send_telegram_msg(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage?chat_id={CHAT_ID}&text={message}&parse_mode=Markdown"
-    requests.get(url)
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage?chat_id={CHAT_ID}&text={message}&parse_mode=Markdown"
+        requests.get(url)
+    except Exception as e:
+        print(f"Telegram Error: {e}")
+
+def get_data():
+    # Downloads recent data
+    df = yf.download(tickers=SYMBOL, period='1d', interval=INTERVAL, progress=False)
+    # Fix multi-index columns if necessary
+    df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
+    return df
 
 def sniper_logic():
-    print("🔭 Human Eye Scanning...")
-    # Fetch data
-    df = yf.download(tickers=SYMBOL, period='1d', interval=INTERVAL)
-    df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
+    print(f"🔭 {time.strftime('%H:%M:%S')} - Scanning with Human Eye Logic...")
+    df = get_data()
+    
+    if len(df) < 20:
+        return
 
-    # 1. Manual EMA calculation (No pandas-ta needed!)
+    # 1. Manual EMA Calculation (Fast & Reliable)
     df['ema9'] = df['close'].ewm(span=9, adjust=False).mean()
     df['ema15'] = df['close'].ewm(span=15, adjust=False).mean()
 
-    # 2. Slope Calculation (The 30° Rule)
-    # Using arctan to get the angle in degrees
+    # 2. Angle/Slope Calculation (The 30° Rule)
+    # We compare the current EMA to 5 minutes ago to see the "steepness"
     lookback = 5
     price_change = df['ema15'].iloc[-1] - df['ema15'].iloc[-lookback]
-    # We normalize price change for better angle detection
+    # Normalizing price change to degrees (approximate)
     angle = np.degrees(np.arctan(price_change / (df['close'].mean() * 0.0001)))
-    
-    # 3. Candlestick "Human Eye" Detection
+
+    # 3. Candlestick Analysis (The Human Eye)
     current = df.iloc[-1]
     body = abs(current['open'] - current['close'])
     lower_wick = min(current['open'], current['close']) - current['low']
-    upper_wick = current['high'] - max(current['open'], current['close'])
     total_range = current['high'] - current['low']
 
-    # --- BUY SNIPER RULES ---
-    # A. Trend: 9 EMA > 15 EMA + Angle > 20° (Adjustable)
+    # --- THE SNIPER RULES ---
+    
+    # RULE 1: Uptrend Check (9 above 15 + Angle must be steep, not flat)
     is_uptrend = current['ema9'] > current['ema15'] and angle > 20
     
-    # B. The Touch: Low touched the 9 EMA
+    # RULE 2: The Retest (Price dipped to touch the 9 EMA)
     did_retest = current['low'] <= current['ema9']
     
-    # C. Pin Bar/Hammer Check: Lower wick is at least 2x the body
-    is_rejection = lower_wick > (2 * body) and lower_wick > (total_range * 0.5)
+    # RULE 3: Wick Rejection (Lower wick is > 2x the body = Hammer/Pin Bar)
+    # This ensures the bot "sees" the bounce, not just a crash through the line
+    has_rejection = lower_wick > (2 * body) and lower_wick > (total_range * 0.5)
     
-    # D. Confirmation: Closed Green
+    # RULE 4: Confirmation (Candle closed Green/Bullish)
     is_green = current['close'] > current['open']
 
-    if is_uptrend and did_retest and is_rejection and is_green:
+    if is_uptrend and did_retest and has_rejection and is_green:
         msg = (
-            "🎯 *MAYANK SNIPER: BUY ALERT*\n"
-            f"💰 Price: ${current['close']:.2f}\n"
-            f"📐 Angle: {angle:.1f}° (Bullish)\n"
-            "🔥 Eye Detail: Pin Bar Rejection at 9 EMA"
+            "🎯 *SNIPER BUY SIGNAL*\n"
+            f"💰 Entry Price: ${current['close']:.2f}\n"
+            f"📐 Trend Angle: {angle:.1f}°\n"
+            "🔥 Setup: 9 EMA Retest + Hammer Wick\n"
+            "🛡️ SL: Below Signal Candle Low"
         )
         send_telegram_msg(msg)
-        print("✅ Signal Sent!")
+        print("✅ Alert Sent to Telegram")
 
-# --- MAIN LOOP ---
+# --- EXECUTION LOOP ---
 while True:
     try:
         sniper_logic()
-        time.sleep(60) 
+        # Scan every minute for the 1m chart
+        time.sleep(60)
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Main Loop Error: {e}")
         time.sleep(10)
