@@ -1,18 +1,22 @@
-name: Mayank Sniper Bot 24/7
+name: Sniper Bot 24/7
+
 on:
   schedule:
-    - cron: '*/5 * * * *'  # Runs every 5 minutes as a heartbeat
-  workflow_dispatch:      # Allows you to start it manually
+    # GitHub's minimum interval is 5-10 minutes, but we keep the loop in Python
+    - cron: '*/5 * * * *'
+  push:
+    branches: [ main ]
+  workflow_dispatch: # This allows you to press "Run Workflow" manually
 
 jobs:
-  run-bot:
+  build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
@@ -25,4 +29,5 @@ jobs:
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-        run: python main_bot.py
+        # Setting a timeout so GitHub doesn't kill it immediately
+        run: timeout 350m python main_bot.py || true
