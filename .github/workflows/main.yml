@@ -1,7 +1,7 @@
-name: Trade Room Sniper (Always Green)
+name: Trade Room Sniper
 on:
   schedule:
-    - cron: '0 * * * *' # Restarts at the start of every hour
+    - cron: '0 * * * *'
   push:
     branches: [ main ]
   workflow_dispatch:
@@ -21,4 +21,4 @@ jobs:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
           PYTHONUNBUFFERED: "1"
-        run: python main_bot.py || true # The "|| true" ensures it ends GREEN
+        run: python main_bot.py || true
