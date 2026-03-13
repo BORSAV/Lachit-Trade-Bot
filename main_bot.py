@@ -6,82 +6,71 @@ import time
 import requests
 
 # --- CONFIG ---
-SYMBOL = "GC=F" # Gold
+SYMBOL = "GC=F"
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
-CHAT_ID = os.environ.get('CHAT_ID')
+CHAT_ID = os.environ.get('CHAT_ID') 
 START_TIME = time.time()
-RUN_DURATION = 3000  # Runs for 50 minutes then exits for Green Tick
+RUN_DURATION = 3000  # 50 minutes
+last_signal_time = None # To avoid double-sending on the same 5m candle
 
 def send_msg(text):
-    if not TELEGRAM_TOKEN or not CHAT_ID:
-        print("❌ Error: Telegram Secrets missing in GitHub!", flush=True)
-        return
+    if not TELEGRAM_TOKEN or not CHAT_ID: return
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         params = {"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"}
-        response = requests.get(url, params=params, timeout=10)
-        if response.status_code != 200:
-            print(f"❌ Telegram Error: {response.text}", flush=True)
-        else:
-            print(f"📡 Telegram Delivered Successfully!", flush=True)
-    except Exception as e:
-        print(f"❌ Connection Error: {e}", flush=True)
+        requests.get(url, params=params, timeout=10)
+    except: pass
 
 def get_signal():
-    # 1. Fetch Data
-    df = yf.download(SYMBOL, period="1d", interval="1m", progress=False)
-    if df.empty or len(df) < 200: return
+    global last_signal_time
+    # 1. FETCH 5M DATA
+    df = yf.download(SYMBOL, period="5d", interval="5m", progress=False)
+    if df.empty or len(df) < 50: return
     
-    # 2. Fix Column Names
     df.columns = [col[0].lower() if isinstance(col, tuple) else col.lower() for col in df.columns]
 
-    # 3. Indicators (9, 15, 200 EMA)
+    # 2. INDICATORS (Optimized for 5m)
     df['ema9'] = df['close'].ewm(span=9, adjust=False).mean()
     df['ema15'] = df['close'].ewm(span=15, adjust=False).mean()
     df['ema200'] = df['close'].ewm(span=200, adjust=False).mean()
 
-    # 4. Angle Calculation (Slope of 15 EMA)
+    # 3. ANGLE (Inertia of the 15 EMA)
     y = df['ema15'].iloc[-5:].values
     x = np.arange(len(y))
     slope, _ = np.polyfit(x, y, 1)
     angle = np.degrees(np.arctan(slope / (df['close'].mean() * 0.0001)))
 
-    # 5. Candle Anatomy
-    curr, prev = df.iloc[-1], df.iloc[-2]
-    body = abs(curr['close'] - curr['open'])
-    lower_wick = min(curr['open'], curr['close']) - curr['low']
-    upper_wick = curr['high'] - max(curr['open'], curr['close'])
-    avg_body = abs(df['close'] - df['open']).tail(10).mean()
+    curr = df.iloc[-1]
+    prev = df.iloc[-2]
+    candle_time = df.index[-1] # Current candle timestamp
 
-    # --- BUY LOGIC (+30°) ---
-    if curr['close'] > curr['ema200'] and curr['ema9'] > curr['ema15'] and angle > 25:
-        if curr['low'] <= (curr['ema9'] + 0.1): # Retest
-            is_pinbar = lower_wick > (1.8 * body)
-            is_engulfing = (curr['close'] > prev['open']) and (prev['close'] < prev['open'])
-            if is_pinbar or is_engulfing:
-                p_type = "Pin Bar" if is_pinbar else "Engulfing"
-                send_msg(f"🚀 *BUY SIGNAL (Gold)*\n💰 Price: ${curr['close']:.2f}\n📐 Angle: {angle:.1f}°\n📍 Type: {p_type} Retest")
-                print(f"✅ BUY SIGNAL: {p_type}", flush=True)
+    # 4. COLOR FILTERS
+    is_green = curr['close'] > curr['open']
+    is_red = curr['close'] < curr['open']
 
-    # --- SELL LOGIC (-30°) ---
-    elif curr['close'] < curr['ema200'] and curr['ema9'] < curr['ema15'] and angle < -25:
-        if curr['high'] >= (curr['ema9'] - 0.1): # Retest
-            is_shooting_star = upper_wick > (1.8 * body)
-            is_bearish_engulfing = (curr['close'] < prev['open']) and (prev['close'] > prev['open'])
-            if is_shooting_star or is_bearish_engulfing:
-                p_type = "Shooting Star" if is_shooting_star else "Bearish Engulfing"
-                send_msg(f"📉 *SELL SIGNAL (Gold)*\n💰 Price: ${curr['close']:.2f}\n📐 Angle: {angle:.1f}°\n📍 Type: {p_type} Retest")
-                print(f"✅ SELL SIGNAL: {p_type}", flush=True)
+    # --- BUY LOGIC (Green Candle + Uptrend + Touch) ---
+    if candle_time != last_signal_time:
+        if curr['close'] > curr['ema200'] and angle > 25 and is_green:
+            if curr['low'] <= (curr['ema9'] + 0.15): # "Pocket" touch
+                send_msg(f"🚀 *5M BUY SIGNAL*\n💰 Gold: ${curr['close']:.2f}\n📐 Angle: {angle:.1f}°\n✅ Logic: Bullish Retest")
+                last_signal_time = candle_time
 
-    else:
-        print(f"[{time.strftime('%H:%M:%S')}] Monitoring... Angle: {angle:.1f}°", flush=True)
+        # --- SELL LOGIC (Red Candle + Downtrend + Touch) ---
+        elif curr['close'] < curr['ema200'] and angle < -25 and is_red:
+            if curr['high'] >= (curr['ema9'] - 0.15): # "Pocket" touch
+                send_msg(f"📉 *5M SELL SIGNAL*\n💰 Gold: ${curr['close']:.2f}\n📐 Angle: {angle:.1f}°\n✅ Logic: Bearish Retest")
+                last_signal_time = candle_time
 
-# --- LOOP FOR GREEN CHECKMARK ---
-print("🚀 Bot Started. Monitoring Buys (>25°) and Sells (<-25°)...", flush=True)
+    print(f"[{time.strftime('%H:%M:%S')}] 5m Scan... Angle: {angle:.1f}°", flush=True)
+
+# --- STARTUP ---
+print("🚀 5-Minute Sniper Online. Scanning high-probability 5m setups...", flush=True)
+send_msg("🤖 *5m Sniper Online:* Scanning 5-minute Gold candles.")
+
 while (time.time() - START_TIME) < RUN_DURATION:
     try:
         get_signal()
-        time.sleep(60)
+        time.sleep(60) # Still checking every 60s to catch the close
     except Exception as e:
         print(f"Error: {e}", flush=True)
         time.sleep(10)
